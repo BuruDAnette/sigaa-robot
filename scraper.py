@@ -1,149 +1,129 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+import os
 import time
+import requests
 import re
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-def rodar_robo_sigaa(login, senha):
-    print("Iniciando...")
+class SigaaScraper:
+    def __init__(self, driver):
+        self.driver = driver
+        self.wait = WebDriverWait(self.driver, 5)
 
-    chrome_options = Options()
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--headless")
-
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    
-    dados_coletados = []
-
-    try:
-        print("Acessando login...")
-        driver.get("https://sig.cefetmg.br/sigaa/verTelaLogin.do")
-        driver.find_element(By.NAME, "user.login").send_keys(login)
-        driver.find_element(By.NAME, "user.senha").send_keys(senha)
-        driver.find_element(By.XPATH, "//input[@value='Entrar']").click()
-        time.sleep(3) 
-
-        print("Acessando lista de turmas...")
-        url_lista = "https://sig.cefetmg.br/sigaa/portais/discente/turmas.jsf"
-        driver.get(url_lista)
-        time.sleep(2)
-
+    def download_photo(self, url, matricula):
+        if not url or "no_picture" in url or "offline" in url:
+            return None
         try:
-            banner = driver.find_element(By.ID, "sigaa-cookie-consent")
-            driver.execute_script("arguments[0].click();", banner.find_element(By.TAG_NAME, "button"))
-        except: pass
+            if not os.path.exists("fotos"):
+                os.makedirs("fotos")
+            
+            session = requests.Session()
+            for cookie in self.driver.get_cookies():
+                session.cookies.set(cookie['name'], cookie['value'])
+            
+            response = session.get(url, verify=False)
+            if response.status_code == 200:
+                ext = "jpg"
+                if ".png" in url: ext = "png"
+                filename = f"fotos/{matricula}.{ext}"
+                with open(filename, 'wb') as f:
+                    f.write(response.content)
+                return filename
+        except Exception as e:
+            print(f"[AVISO] Erro ao baixar foto {matricula}: {e}")
+        return None
 
-        setas = driver.find_elements(By.XPATH, "//img[contains(@src, 'avancar.gif')]/parent::a")
-        total_materias = len(setas)
-        print(f"Encontradas {total_materias} matérias.")
-
-        for i in range(total_materias):
+    def extract_student_data(self):
+        dados = []
+        
+        tabela = None
+        selectors = [
+            (By.ID, "participantes"),
+            (By.XPATH, "//*[contains(text(),'Discentes')]/following::table[1]"),
+            (By.XPATH, "//th[contains(text(),'Matrícula')]/ancestor::table"),
+            (By.CSS_SELECTOR, "table.listagem")
+        ]
+        
+        print("[Scraper] Buscando tabela de alunos...")
+        for by, val in selectors:
             try:
-                driver.get(url_lista)
-                time.sleep(2)
-                setas_atualizadas = driver.find_elements(By.XPATH, "//img[contains(@src, 'avancar.gif')]/parent::a")
+                tabela = self.driver.find_element(by, val)
+                if tabela.is_displayed():
+                    print(f"[Scraper] Tabela encontrada via: {val}")
+                    break
+            except:
+                continue
                 
-                if i >= len(setas_atualizadas): break
-                
-                setas_atualizadas[i].click()
-                time.sleep(3)
+        if not tabela:
+            print("[ERRO] Tabela de participantes não encontrada com nenhum método.")
+            return []
 
-                botao_participantes = None
+        linhas = tabela.find_elements(By.TAG_NAME, "tr")
+        print(f"[Scraper] Analisando {len(linhas)} linhas...")
+
+        for i, linha in enumerate(linhas):
+            try:
+                texto = linha.text
+                
+                if "Matrícula" not in texto and "Curso" not in texto:
+                    continue
+                
                 try:
-                    menu_turma = driver.find_element(By.XPATH, "//td[contains(text(), 'Turma')]")
-                    driver.execute_script("arguments[0].click();", menu_turma)
-                    time.sleep(1)
-                    botao_participantes = driver.find_element(By.XPATH, "//span[contains(@id, 'menuParticipantes')]")
+                    btn_perfil = linha.find_element(By.CSS_SELECTOR, "img[title='Visualizar Perfil']")
                 except:
-                    try:
-                        botao_participantes = driver.find_element(By.XPATH, "//div[@class='itemMenu' and contains(text(), 'Participantes')]")
-                    except: pass
+                    continue
 
-                if not botao_participantes:
-                    frames = driver.find_elements(By.TAG_NAME, "iframe") + driver.find_elements(By.TAG_NAME, "frame")
-                    for frame in frames:
-                        try:
-                            driver.switch_to.frame(frame)
-                            botao_participantes = driver.find_element(By.XPATH, "//div[@class='itemMenu' and contains(text(), 'Participantes')]")
-                            if botao_participantes: break
-                        except: driver.switch_to.default_content()
-
-                if botao_participantes:
-                    driver.execute_script("arguments[0].click();", botao_participantes)
-                    time.sleep(3)
-
-                    linhas = driver.find_elements(By.CSS_SELECTOR, "table.participantes tbody tr")
-                    if not linhas: linhas = driver.find_elements(By.CSS_SELECTOR, "table.listagem tbody tr")
-                    
-                    count = 0
-                    for linha in linhas:
-                        colunas = linha.find_elements(By.TAG_NAME, "td")
-                        if len(colunas) >= 2:
-                            texto_completo = colunas[1].text.strip()
-                            
-                            if "Departamento:" in texto_completo or "Formação:" in texto_completo or "Docente" in linha.text:
-                                continue
-
-                            if not texto_completo: continue
-
-                            nome_real = texto_completo
-                            matricula_real = ""
-                            email_real = ""
-                            curso_real = "SIGAA"
-
-                            if "Matrícula:" in texto_completo:
-                                try:
-                                    partes = texto_completo.split("Curso:")
-                                    nome_real = partes[0].strip()
-                                    
-                                    match_matr = re.search(r'Matrícula:\s*(\d+)', texto_completo)
-                                    if match_matr:
-                                        matricula_real = match_matr.group(1)
-                                    
-                                    match_email = re.search(r'E-mail:\s*([\w\.-]+@[\w\.-]+)', texto_completo)
-                                    if match_email:
-                                        email_real = match_email.group(1)
-
-                                    match_curso = re.search(r'Curso:\s*(.*?)\n', texto_completo)
-                                    if match_curso:
-                                        curso_real = match_curso.group(1).strip()
-
-                                except:
-                                    pass
-                            
-                            if not matricula_real:
-                                texto_col0 = colunas[0].text.strip()
-                                if texto_col0.isdigit():
-                                    matricula_real = texto_col0
-                                else:
-                                    matricula_real = str(hash(nome_real))
-
-                            if not any(a['matricula'] == matricula_real for a in dados_coletados):
-                                dados_coletados.append({
-                                    "matricula": matricula_real,
-                                    "nome": nome_real,
-                                    "curso": curso_real,
-                                    "email": email_real,
-                                    "status": "ATIVO"
-                                })
-                                count += 1
-                                
-                    print(f"+{count} alunos processados na turma.")
+                matricula = "00000"
+                nome = "Desconhecido"
                 
-                driver.switch_to.default_content()
+                match_mat = re.search(r'Matrícula:\s*(\d+)', texto)
+                if match_mat:
+                    matricula = match_mat.group(1)
+                
+                try:
+                    nome = texto.split("\n")[0].strip()
+                    if "Visualizar Perfil" in nome: nome = nome.replace("Visualizar Perfil", "")
+                except: pass
+
+                self.driver.execute_script("arguments[0].click();", btn_perfil)
+                
+                modal = self.wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "div.ui-dialog")))
+                time.sleep(0.3)
+                
+                email = "Não informado"
+                caminho_foto = None
+                
+                try:
+                    try:
+                        lbl_email = modal.find_element(By.XPATH, ".//strong[contains(text(),'E-mail')]/following-sibling::em")
+                        email = lbl_email.text.strip()
+                    except:
+                        match_email = re.search(r'[\w\.-]+@[\w\.-]+', modal.text)
+                        if match_email: email = match_email.group(0)
+
+                    img = modal.find_element(By.XPATH, ".//div[contains(@class,'ui-dialog-content')]//img[contains(@src,'foto') or contains(@src,'perfil') or contains(@src,'arquivo')]")
+                    src = img.get_attribute("src")
+                    caminho_foto = self.download_photo(src, matricula)
+
+                except Exception as ex:
+                    print(f"[Aviso] Falha ao ler detalhes do modal: {ex}")
+
+                try:
+                    fechar = modal.find_element(By.CSS_SELECTOR, "a.ui-dialog-titlebar-close")
+                    self.driver.execute_script("arguments[0].click();", fechar)
+                    self.wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, "div.ui-dialog")))
+                except: pass
+
+                dados.append({
+                    "matricula": matricula,
+                    "nome": nome,
+                    "email": email,
+                    "foto_path": caminho_foto
+                })
+                print(f"[+]: {nome}")
 
             except Exception as e:
-                print(f"Erro na matéria {i+1}: {str(e)[:50]}")
-                driver.switch_to.default_content()
                 continue
-
-        return dados_coletados
-
-    except Exception as e:
-        return [{"erro": str(e)}]
-    finally:
-        driver.quit()
+        
+        return dados
