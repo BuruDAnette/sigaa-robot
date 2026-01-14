@@ -1,121 +1,116 @@
-import time
-import json
 import sys
+import json
 import os
+import time
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from scraper import SigaaScraper
 
-URL_LOGIN = "https://sig.cefetmg.br/sigaa/verTelaLogin.do"
-URL_TURMAS_ANTERIORES = "https://sig.cefetmg.br/sigaa/portais/discente/turmas.jsf"
-
-def salvar_dados(dados, nome_arquivo="alunos_coletados.json"):
-    try:
-        caminho = os.path.abspath(nome_arquivo)
-        with open(caminho, 'w', encoding='utf-8') as f:
-            json.dump(dados, f, ensure_ascii=False, indent=4)
-        print(f"JSON_GERADO: {caminho}") 
-    except Exception as e:
-        print(f"Erro salvar: {e}")
-
 def main():
     if len(sys.argv) < 3:
-        print("Erro: Use python main.py <usuario> <senha>")
-        # USERNAME = "seu_teste"
-        # PASSWORD = "sua_senha"
-        return
-    else:
-        USERNAME = sys.argv[1]
-        PASSWORD = sys.argv[2]
+        print("Uso: python main.py <usuario> <senha>")
+        sys.exit(1)
 
-    # --- CONFIGURAÇÃO ANTI-BLOQUEIO ---
-    options = webdriver.ChromeOptions()
-    options.add_argument("--start-maximized")
-    options.add_argument("--disable-popup-blocking") # IMPORTANTE: Permite popups
-    # options.add_argument("--headless") # Descomente para ocultar janela
+    login = sys.argv[1]
+    senha = sys.argv[2]
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    wait = WebDriverWait(driver, 15)
-    bot = SigaaScraper(driver)
+    chrome_options = Options()
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    wait = WebDriverWait(driver, 10)
     
-    todos_alunos = []
-    # SET PARA EVITAR DUPLICATAS (Armazena só as matrículas já vistas)
-    matriculas_vistas = set()
+    scraper = SigaaScraper(driver)
+    
+    dados_gerais = []
 
     try:
-        # 1. Login
-        print("[1/5] Login...")
-        driver.get(URL_LOGIN)
-        driver.find_element(By.NAME, "user.login").send_keys(USERNAME)
-        driver.find_element(By.NAME, "user.senha").send_keys(PASSWORD)
-        driver.find_element(By.XPATH, "//input[@value='Entrar']").click()
-        wait.until(EC.presence_of_element_located((By.ID, "conteudo")))
+        print("[Python] Acedendo ao SIGAA...")
+        driver.get("https://sig.cefetmg.br/sigaa/verTelaLogin.do")
+        
+        # Login
+        driver.find_element("name", "user.login").send_keys(login)
+        driver.find_element("name", "user.senha").send_keys(senha)
+        driver.find_element("css selector", "input[value='Entrar']").click()
+        
+        try:
+            wait.until(EC.presence_of_element_located((By.ID, "painel-usuario")))
+        except:
+            print("[Python] Erro: Login falhou.")
+            return
 
-        # 2. Ir para Turmas
-        print("[2/5] Indo para Turmas Anteriores...")
-        driver.get(URL_TURMAS_ANTERIORES)
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "table")))
+        print("[Python] Indo para lista de Turmas Anteriores...")
+        try:
+            link_anteriores = driver.find_element(By.LINK_TEXT, "Ver turmas anteriores")
+            driver.execute_script("arguments[0].click();", link_anteriores)
+            wait.until(EC.presence_of_element_located((By.CLASS_NAME, "listagem")))
+        except:
+            print("[Python] Não achei o link de turmas anteriores. Tentando pegar a atual do dashboard.")
 
-        # 3. Loop Turmas
-        idx = 0
-        while True:
-            # Pega as setinhas verdes (Botões de entrar)
-            setinhas = driver.find_elements(By.XPATH, "//td//form[contains(@action, 'turmas.jsf')]//input[@type='image'] | //a[.//img[contains(@src, 'avancar') or contains(@src, 'seta')]]")
+        botoes_turma = driver.find_elements(By.XPATH, "//table[@class='listagem']//a[.//img[contains(@src, 'avancar.gif')]]")
+        total_turmas = len(botoes_turma)
+        print(f"[Python] Encontradas {total_turmas} turmas para processar.")
+
+        if total_turmas > 5:
+            print("[Python] LIMITANDO A 5 TURMAS PARA TESTE RÁPIDO!")
+            total_turmas = 5
+
+        for i in range(total_turmas):
+            print(f"\n--- Processando Turma {i+1}/{total_turmas} ---")
             
-            if idx >= len(setinhas):
-                print("--- Fim das turmas ---")
-                break
-                
-            # Entra na turma
+            botoes_turma = driver.find_elements(By.XPATH, "//table[@class='listagem']//a[.//img[contains(@src, 'avancar.gif')]]")
+            
+            if i >= len(botoes_turma): break # Segurança
+            
+            driver.execute_script("arguments[0].click();", botoes_turma[i])
+            time.sleep(1.5)
+
             try:
-                linha = setinhas[idx].find_element(By.XPATH, "./ancestor::tr")
-                nome_turma = linha.text.split("\n")[0]
-            except: nome_turma = f"Turma {idx+1}"
+                nome_turma = scraper.get_nome_turma()
+                print(f"[Python] Turma: {nome_turma}")
 
-            print(f"\n[3/5] Turma: {nome_turma}")
-            
-            # Clica (JS Force para garantir)
-            driver.execute_script("arguments[0].click();", setinhas[idx])
-            time.sleep(2)
-
-            # 4. Extrai
-            if bot.acessar_participantes():
-                novos_alunos = bot.extrair_dados_perfil()
-                
-                # --- FILTRO DE DUPLICATAS ---
-                count_adicionados = 0
-                for aluno in novos_alunos:
-                    mat = aluno.get('matricula')
+                if scraper.acessar_participantes():
+                    dados_professor = scraper.extrair_professor()
+                    lista_alunos = scraper.extrair_alunos()
                     
-                    # Se tem matrícula e ela AINDA NÃO FOI VISTA
-                    if mat and mat not in matriculas_vistas:
-                        aluno['disciplina_origem'] = nome_turma
-                        todos_alunos.append(aluno)
-                        matriculas_vistas.add(mat) # Marca como visto
-                        count_adicionados += 1
-                    # Se não tem matrícula, adiciona mesmo assim por segurança (ou ignore)
-                    elif not mat:
-                        todos_alunos.append(aluno)
+                    print(f"[Python] -> {len(lista_alunos)} alunos coletados.")
+
+                    dados_gerais.append({
+                        "disciplina": nome_turma,
+                        "professor": dados_professor,
+                        "alunos": lista_alunos
+                    })
                 
-                print(f"   -> {len(novos_alunos)} lidos. {count_adicionados} novos adicionados (sem repetir).")
-            else:
-                print("   -> Erro ao acessar menu.")
+            except Exception as e:
+                print(f"[Python] Erro ao ler turma: {e}")
 
-            # 5. Volta
-            print("   -> Voltando...")
-            driver.get(URL_TURMAS_ANTERIORES)
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "table")))
-            idx += 1
+            print("[Python] Voltando para a lista...")
+            driver.back()
 
-        salvar_dados(todos_alunos)
+            try:
+                wait.until(EC.presence_of_element_located((By.CLASS_NAME, "listagem")))
+            except:
+                driver.get("https://sig.cefetmg.br/sigaa/portais/discente/turmas.jsf")
+                wait.until(EC.presence_of_element_located((By.CLASS_NAME, "listagem")))
+
+        
+        caminho_json = os.path.abspath("dados_sigaa.json")
+        with open(caminho_json, "w", encoding="utf-8") as f:
+            json.dump(dados_gerais, f, ensure_ascii=False, indent=4)
+
+        print(f"JSON_GERADO:{caminho_json}")
 
     except Exception as e:
-        print(f"ERRO FATAL: {e}")
-        if todos_alunos: salvar_dados(todos_alunos)
+        print(f"[Python] Erro fatal: {e}")
     finally:
         driver.quit()
 
