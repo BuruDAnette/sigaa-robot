@@ -31,12 +31,13 @@ def main():
     
     scraper = SigaaScraper(driver)
     
-    dados_gerais = []
+    dados_gerais = [] 
 
     try:
         print("[Python] Acedendo ao SIGAA...")
         driver.get("https://sig.cefetmg.br/sigaa/verTelaLogin.do")
         
+        # Login
         driver.find_element("name", "user.login").send_keys(login)
         driver.find_element("name", "user.senha").send_keys(senha)
         driver.find_element("css selector", "input[value='Entrar']").click()
@@ -50,10 +51,10 @@ def main():
 
         print("[Python] Indo para lista de Turmas...")
         try:
-            link = driver.find_element(By.LINK_TEXT, "Ver turmas anteriores")
-            driver.execute_script("arguments[0].click();", link)
+            link_anteriores = driver.find_element(By.LINK_TEXT, "Ver turmas anteriores")
+            driver.execute_script("arguments[0].click();", link_anteriores)
         except:
-            pass
+            pass 
 
         indice_turma = 0
         
@@ -64,21 +65,21 @@ def main():
                 driver.get("https://sig.cefetmg.br/sigaa/portais/discente/turmas.jsf")
                 time.sleep(1)
 
-            botoes = driver.find_elements(By.XPATH, "//a[.//img[contains(@src, 'avancar.gif')]]")
-            total = len(botoes)
+            botoes_turma = driver.find_elements(By.XPATH, "//a[.//img[contains(@src, 'avancar.gif')]]")
+            total = len(botoes_turma)
             
             if total == 0 or indice_turma >= total:
-                print(f"[Python] Processamento finalizado! {indice_turma} turmas processadas.")
+                print(f"[Python] Fim! {indice_turma} turmas processadas.")
                 break
 
             print(f"\n--- Processando Turma {indice_turma + 1} de {total} ---")
             
-            driver.execute_script("arguments[0].click();", botoes[indice_turma])
+            driver.execute_script("arguments[0].click();", botoes_turma[indice_turma])
             time.sleep(1.5)
 
             try:
-                nome_turma = scraper.get_nome_turma()
-                print(f"[Python] Turma: {nome_turma}")
+                cabecalho = scraper.get_dados_cabecalho()
+                print(f"[Python] Turma: {cabecalho['nome']} | {cabecalho['horario']}")
 
                 if scraper.acessar_participantes():
                     prof = scraper.extrair_professor()
@@ -87,12 +88,15 @@ def main():
                     print(f"   -> {len(alunos)} alunos coletados.")
 
                     dados_gerais.append({
-                        "disciplina": nome_turma,
+                        "disciplina": cabecalho['nome'],
+                        "codigo": cabecalho['codigo'],
+                        "semestre": cabecalho['semestre'],
+                        "horario": cabecalho['horario'],
                         "professor": prof,
                         "alunos": alunos
                     })
                 
-                driver.back()
+                driver.back() 
                 driver.back()
                 
             except Exception as e:

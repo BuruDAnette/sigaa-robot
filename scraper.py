@@ -9,13 +9,34 @@ class SigaaScraper:
         self.driver = driver
         self.wait = WebDriverWait(driver, 5)
 
-    def get_nome_turma(self):
+    def get_dados_cabecalho(self):
+        dados = {
+            "nome": "Desconhecido",
+            "codigo": "",
+            "semestre": "",
+            "horario": ""
+        }
         try:
-            cod = self.driver.find_element(By.ID, "linkCodigoTurma").text.strip()
-            nome = self.driver.find_element(By.ID, "linkNomeTurma").text.strip()
-            return f"{cod.replace(' -', '')} - {nome}"
-        except:
-            return "Turma Desconhecida"
+            cod_elem = self.driver.find_element(By.ID, "linkCodigoTurma").text.strip()
+            nome_elem = self.driver.find_element(By.ID, "linkNomeTurma").text.strip()
+            
+            dados["codigo"] = cod_elem.replace(" -", "").strip()
+            dados["nome"] = f"{dados['codigo']} - {nome_elem}"
+
+            periodo_elem = self.driver.find_element(By.ID, "linkPeriodoTurma").text.strip()
+            
+            match = re.search(r'\((.*?)\s*-\s*(.*?)\)', periodo_elem)
+            if match:
+                dados["semestre"] = match.group(1).strip()
+                dados["horario"] = match.group(2).strip()
+            else:
+                match_sem = re.search(r'\((.*?)\)', periodo_elem)
+                if match_sem: dados["semestre"] = match_sem.group(1).strip()
+
+            return dados
+        except Exception as e:
+            print(f"   -> [Aviso] Erro ao ler cabeçalho: {e}")
+            return dados
 
     def acessar_participantes(self):
         print("   -> [Navegação] Buscando menu Participantes...")
@@ -58,11 +79,10 @@ class SigaaScraper:
         lista = []
         try:
             linhas = self.driver.find_elements(By.XPATH, "//table[@class='participantes']//tr")
-            print(f"   -> [Extração] Varrendo {len(linhas)} linhas por alunos (2 colunas)...")
+            print(f"   -> [Extração] Varrendo {len(linhas)} linhas (modo Grid)...")
 
             for tr in linhas:
                 cols = tr.find_elements(By.TAG_NAME, "td")
-                
                 for i, col in enumerate(cols):
                     try:
                         texto = col.text
@@ -78,9 +98,8 @@ class SigaaScraper:
                         foto = ""
                         if i > 0:
                             try:
-                                img = cols[i-1].find_element(By.TAG_NAME, "img")
-                                src = img.get_attribute("src")
-                                if src and "no_picture" not in src: foto = src
+                                src = cols[i-1].find_element(By.TAG_NAME, "img").get_attribute("src")
+                                if "no_picture" not in src: foto = src
                             except: pass
 
                         lista.append({
@@ -90,6 +109,5 @@ class SigaaScraper:
                             "foto": foto
                         })
                     except: continue
-
             return lista
         except: return []
