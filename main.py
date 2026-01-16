@@ -37,7 +37,6 @@ def main():
         print("[Python] Acedendo ao SIGAA...")
         driver.get("https://sig.cefetmg.br/sigaa/verTelaLogin.do")
         
-        # Login
         driver.find_element("name", "user.login").send_keys(login)
         driver.find_element("name", "user.senha").send_keys(senha)
         driver.find_element("css selector", "input[value='Entrar']").click()
@@ -46,32 +45,35 @@ def main():
             wait.until(EC.presence_of_element_located((By.ID, "painel-usuario")))
         except:
             print("[Python] Erro: Login falhou.")
+            driver.quit()
             return
 
-        print("[Python] Indo para lista de Turmas Anteriores...")
+        print("[Python] Indo para lista de Turmas...")
         try:
-            link_anteriores = driver.find_element(By.LINK_TEXT, "Ver turmas anteriores")
-            driver.execute_script("arguments[0].click();", link_anteriores)
-            wait.until(EC.presence_of_element_located((By.CLASS_NAME, "listagem")))
+            link = driver.find_element(By.LINK_TEXT, "Ver turmas anteriores")
+            driver.execute_script("arguments[0].click();", link)
         except:
-            print("[Python] Não achei o link de turmas anteriores. Tentando pegar a atual do dashboard.")
+            pass
 
-        botoes_turma = driver.find_elements(By.XPATH, "//table[@class='listagem']//a[.//img[contains(@src, 'avancar.gif')]]")
-        total_turmas = len(botoes_turma)
-        print(f"[Python] Encontradas {total_turmas} turmas para processar.")
+        indice_turma = 0
+        
+        while True:
+            try:
+                wait.until(EC.presence_of_element_located((By.CLASS_NAME, "listagem")) or EC.presence_of_element_located((By.CLASS_NAME, "subFormulario")))
+            except:
+                driver.get("https://sig.cefetmg.br/sigaa/portais/discente/turmas.jsf")
+                time.sleep(1)
 
-        if total_turmas > 5:
-            print("[Python] LIMITANDO A 5 TURMAS PARA TESTE RÁPIDO!")
-            total_turmas = 5
+            botoes = driver.find_elements(By.XPATH, "//a[.//img[contains(@src, 'avancar.gif')]]")
+            total = len(botoes)
+            
+            if total == 0 or indice_turma >= total:
+                print(f"[Python] Processamento finalizado! {indice_turma} turmas processadas.")
+                break
 
-        for i in range(total_turmas):
-            print(f"\n--- Processando Turma {i+1}/{total_turmas} ---")
+            print(f"\n--- Processando Turma {indice_turma + 1} de {total} ---")
             
-            botoes_turma = driver.find_elements(By.XPATH, "//table[@class='listagem']//a[.//img[contains(@src, 'avancar.gif')]]")
-            
-            if i >= len(botoes_turma): break # Segurança
-            
-            driver.execute_script("arguments[0].click();", botoes_turma[i])
+            driver.execute_script("arguments[0].click();", botoes[indice_turma])
             time.sleep(1.5)
 
             try:
@@ -79,30 +81,26 @@ def main():
                 print(f"[Python] Turma: {nome_turma}")
 
                 if scraper.acessar_participantes():
-                    dados_professor = scraper.extrair_professor()
-                    lista_alunos = scraper.extrair_alunos()
+                    prof = scraper.extrair_professor()
+                    alunos = scraper.extrair_alunos()
                     
-                    print(f"[Python] -> {len(lista_alunos)} alunos coletados.")
+                    print(f"   -> {len(alunos)} alunos coletados.")
 
                     dados_gerais.append({
                         "disciplina": nome_turma,
-                        "professor": dados_professor,
-                        "alunos": lista_alunos
+                        "professor": prof,
+                        "alunos": alunos
                     })
                 
+                driver.back()
+                driver.back()
+                
             except Exception as e:
-                print(f"[Python] Erro ao ler turma: {e}")
-
-            print("[Python] Voltando para a lista...")
-            driver.back()
-
-            try:
-                wait.until(EC.presence_of_element_located((By.CLASS_NAME, "listagem")))
-            except:
+                print(f"[Python] Erro nesta turma: {e}")
                 driver.get("https://sig.cefetmg.br/sigaa/portais/discente/turmas.jsf")
-                wait.until(EC.presence_of_element_located((By.CLASS_NAME, "listagem")))
 
-        
+            indice_turma += 1
+
         caminho_json = os.path.abspath("dados_sigaa.json")
         with open(caminho_json, "w", encoding="utf-8") as f:
             json.dump(dados_gerais, f, ensure_ascii=False, indent=4)

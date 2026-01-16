@@ -2,7 +2,6 @@ import json
 import sqlite3
 import os
 
-# 1. Configurações dos arquivos
 ARQUIVO_JSON = r"C:\Users\Administrador\OneDrive\Documentos\sigaa-robot\alunos_coletados.json"
 NOME_BANCO = "base_alunos.db"
 
